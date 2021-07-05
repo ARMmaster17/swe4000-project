@@ -1,8 +1,8 @@
 // PRECOMPILER DIRECTIVES
-//#define ENABLE_SERVO
-//#define ENABLE_RFID
+#define ENABLE_SERVO
+#define ENABLE_RFID
 #define ENABLE_OLED
-//#define ENABLE_JOYSTICK
+#define ENABLE_JOYSTICK
 
 // IMPORTED LIBRARIES
 #include <Servo.h>
@@ -10,6 +10,10 @@
   #include <Wire.h>
   #include <Adafruit_GFX.h>
   #include <Adafruit_SSD1306.h>
+#endif
+#ifdef ENABLE_RFID
+  #include <SPI.h>
+  #include <MFRC522.h>
 #endif
 
 // CONFIGURABLE CONSTANTS
@@ -23,7 +27,16 @@ const int LED_STATE_UNLOCKED_PIN = 4;
 #ifndef ENABLE_RFID
   const int UNLOCK_BUTTON_PIN = 2;
 #endif
-
+#ifdef ENABLE_JOYSTICK
+  const int JOYSTICK_X_PIN = A1;
+  const int JOYSTICK_Y_PIN = A2;
+  const int JOYSTICK_Z_PIN = 6;
+#endif
+#ifdef ENABLE_RFID
+  const int RFID_SS_PIN = 8;
+  const int RFID_RST_PIN = 7;
+#endif
+const int SOLAR_PANEL_READ_PIN = A0;
 const int EMERGENCY_BUTTON_PIN = 3;
 
 // MACHINE PARAMETERS
@@ -37,6 +50,13 @@ const int EMERGENCY_BUTTON_PIN = 3;
 #ifdef ENABLE_OLED
   const int OLED_SCREEN_WIDTH = 128;
   const int OLED_SCREEN_HEIGHT = 32;
+#endif
+#ifdef ENABLE_RFID
+  const String RFID_VALID_CARD = "C3 A5 2C 40";
+#endif
+#ifdef ENABLE_JOYSTICK
+  // The maximum delta of xPos or yPos based on input. Joystick input will be scaled to this value.
+  const int MAX_INPUT_SPEED = 5;
 #endif
 
 // ENUMS
@@ -64,6 +84,9 @@ MachineState machineState;
 #ifdef ENABLE_OLED
   Adafruit_SSD1306 oled(OLED_SCREEN_WIDTH, OLED_SCREEN_HEIGHT, &Wire, -1);
 #endif
+#ifdef ENABLE_RFID
+  MFRC522 mfrc522(RFID_SS_PIN, RFID_RST_PIN);
+#endif
 
 // Arduino-mandated setup function. Runs once.
 void setup() {
@@ -83,6 +106,13 @@ void setup() {
     oled.setCursor(0, 10);
     oled.println("starting up...");
     oled.display();
+  #endif
+  #ifdef ENABLE_JOYSTICK
+    pinMode(JOYSTICK_Z_PIN, INPUT);
+  #endif
+  #ifdef ENABLE_RFID
+    SPI.begin();
+    mfrc522.PCD_Init();
   #endif
   // Machine should start in a locked state.
   LockMachine();
@@ -115,17 +145,19 @@ void loop() {
 
 void ReadJoystickInputs() {
   #ifndef ENABLE_JOYSTICK
-  xPos++;
-  if (xPos > 180) {
-    xPos = 0;
-  }
-  yPos++;
-  if (yPos > 180) {
-    yPos = 0;
-  }
+    xPos++;
+    if (xPos > 180) {
+      xPos = 0;
+    }
+    yPos++;
+    if (yPos > 180) {
+      yPos = 0;
+    }
   #endif
+  // NormalizeValue(float inBottom, float inTop, float value, int outBottom, int outTop)
   #ifdef ENABLE_JOYSTICK
-    // TODO: Read joystick inputs.
+    xPos += NormalizeValue(0, 1023, analogRead(JOYSTICK_X_PIN), 0, MAX_INPUT_SPEED);
+    yPos += NormalizeValue(0, 1023, analogRead(JOYSTICK_Y_PIN), 0, MAX_INPUT_SPEED);
   #endif
 }
 
@@ -153,22 +185,22 @@ int SafeValue(int input, int minimum, int maximum) {
   return min(maximum, max(minimum, input));
 }
 
+void SetServosToCurrentPosition() {
+  #ifdef ENABLE_SERVO
+    xServo.write(SafeValue(xPos, SERVO_X_MIN_ANGLE, SERVO_X_MAX_ANGLE));
+    yServo.write(SafeValue(yPos, SERVO_Y_MIN_ANGLE, SERVO_Y_MAX_ANGLE));
+  #endif
+}
+
 void DoStateUnlockedFunctions() {
   DrawUnlockedScreen();
   ReadJoystickInputs();
-  // This is a temporary test of the servo code. Ignore this.
-  #ifdef ENABLE_SERVO
-  xServo.write(SafeValue(xPos, SERVO_X_MIN_ANGLE, SERVO_X_MAX_ANGLE);
-  yServo.write(SafeValue(yPos, SERVO_Y_MIN_ANGLE, SERVO_Y_MAX_ANGLE);
-  #endif
-  #ifndef ENABLE_RFID
-    // Check if the lock/unlock button has been pressed.
-    if (digitalRead(UNLOCK_BUTTON_PIN) == LOW) {
-      LockMachine();
-      delay(1000);
-      return;
-    }
-  #endif
+  SetServosToCurrentPosition();
+  if (ValidChangeLockAction()) {
+    UnlockMachine();
+    delay(1000);
+    return;
+  }
 }
 
 void DoStateLockedFunctions() {
@@ -186,14 +218,11 @@ void DoStateLockedFunctions() {
     #endif
     oled.display();
   #endif
-  #ifndef ENABLE_RFID
-    // Check if the lock/unlock button has been pressed.
-    if (digitalRead(UNLOCK_BUTTON_PIN) == LOW) {
-      UnlockMachine();
-      delay(1000);
-      return;
-    }
-  #endif
+  if (ValidChangeLockAction()) {
+    UnlockMachine();
+    delay(1000);
+    return;
+  }
 }
 
 void DoStateEmergencyFunctions() {
@@ -251,4 +280,44 @@ int NormalizeValue(float inBottom, float inTop, float value, int outBottom, int 
   int tempZeroedMaxValue = outTop - outBottom;
   int result = int((value * tempZeroedMaxValue) / inTop);
   return result + outBottom;
+}
+
+bool ValidChangeLockAction() {
+  #ifndef ENABLE_RFID
+    // Check if the lock/unlock button has been pressed.
+    if (digitalRead(UNLOCK_BUTTON_PIN) == LOW) {
+      return true;
+    } else {
+      return false;
+    }
+  #endif
+  #ifdef ENABLE_RFID
+    if ( ! mfrc522.PICC_IsNewCardPresent())
+    {
+      // TODO: Possibly show an error here?
+      return false;
+    }
+    if ( ! mfrc522.PICC_ReadCardSerial())
+    {
+      // TODO: Possibly show an error here?
+      return false;
+    }
+    String content= "";
+    byte letter;
+    for (byte i = 0; i < mfrc522.uid.size; i++)
+    {
+      content.concat(String(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " "));
+      content.concat(String(mfrc522.uid.uidByte[i], HEX));
+    }
+    content.toUpperCase();
+    if (content.substring(1) == RFID_VALID_CARD)
+    {
+      // TODO: Show access granted message?
+      return true;
+    }
+    else   {
+      // TODO: Show access denied message?
+      return false;
+    }
+  #endif
 }
