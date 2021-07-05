@@ -143,6 +143,8 @@ void loop() {
   }
 }
 
+// Reads the analog value of the joystick inputs (if enabled) and stores them in normalized form in global variables.
+// If ENABLE_JOYSTICK is not defined, xPos and yPos will increment from 0 to 180 repeatedly.
 void ReadJoystickInputs() {
   #ifndef ENABLE_JOYSTICK
     xPos++;
@@ -161,6 +163,7 @@ void ReadJoystickInputs() {
   #endif
 }
 
+// Displays an unlocked message, the current normalized voltage readout from the solar panel, and the current position graph.
 void DrawUnlockedScreen() {
   #ifdef ENABLE_OLED
     oled.clearDisplay();
@@ -171,7 +174,7 @@ void DrawUnlockedScreen() {
     // Display current voltage.
     oled.print(analogRead(A0) * 5 / 1023);
     oled.println("V");
-    // Draw current position component.
+    // Draw current position graph.
     oled.drawRect(OLED_SCREEN_WIDTH - OLED_SCREEN_HEIGHT, 0, OLED_SCREEN_HEIGHT, OLED_SCREEN_HEIGHT, WHITE);
     int drawCursorX = NormalizeValue(0, 180, xPos, OLED_SCREEN_WIDTH - OLED_SCREEN_HEIGHT, OLED_SCREEN_WIDTH - 1);
     int drawCursorY = NormalizeValue(0, 180, yPos, 1, OLED_SCREEN_HEIGHT - 1);
@@ -185,6 +188,7 @@ int SafeValue(int input, int minimum, int maximum) {
   return min(maximum, max(minimum, input));
 }
 
+// Sets the servos to the current xPos and yPos values. Will not exceed the minimum and maximum angle constants.
 void SetServosToCurrentPosition() {
   #ifdef ENABLE_SERVO
     xServo.write(SafeValue(xPos, SERVO_X_MIN_ANGLE, SERVO_X_MAX_ANGLE));
@@ -192,6 +196,7 @@ void SetServosToCurrentPosition() {
   #endif
 }
 
+// Actions that will be performed once per cycle while the machine is unlocked.
 void DoStateUnlockedFunctions() {
   DrawUnlockedScreen();
   ReadJoystickInputs();
@@ -203,6 +208,7 @@ void DoStateUnlockedFunctions() {
   }
 }
 
+// Actions that will be performed once per cycle while the machine is locked.
 void DoStateLockedFunctions() {
   #ifdef ENABLE_OLED
     oled.clearDisplay();
@@ -225,6 +231,7 @@ void DoStateLockedFunctions() {
   }
 }
 
+// Actions that will be performed once per cycle while the machine is in an emergency state.
 void DoStateEmergencyFunctions() {
   digitalWrite(LED_STATE_UNLOCKED_PIN, LOW);
   digitalWrite(LED_STATE_LOCKED_PIN, HIGH);
@@ -282,6 +289,9 @@ int NormalizeValue(float inBottom, float inTop, float value, int outBottom, int 
   return result + outBottom;
 }
 
+// Returns true if the operator has successfully completed an action that should unlock the machine. If RFID_ENABLE
+// is set, this will return true if a valid card is detected by an RFID reader. Otherwise this function will return true
+// if the unlock/lock button is pressed.
 bool ValidChangeLockAction() {
   #ifndef ENABLE_RFID
     // Check if the lock/unlock button has been pressed.
