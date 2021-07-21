@@ -3,6 +3,7 @@
 #define ENABLE_RFID
 #define ENABLE_OLED
 #define ENABLE_JOYSTICK
+#define ENABLE_RANGELIGHTS
 
 // IMPORTED LIBRARIES
 #include <Servo.h>
@@ -28,8 +29,8 @@ const int LED_STATE_UNLOCKED_PIN = 4;
   const int UNLOCK_BUTTON_PIN = 2;
 #endif
 #ifdef ENABLE_JOYSTICK
-  const int JOYSTICK_X_PIN = A1;
-  const int JOYSTICK_Y_PIN = A2;
+  const int JOYSTICK_X_PIN = A2;
+  const int JOYSTICK_Y_PIN = A1;
   const int JOYSTICK_Z_PIN = 6;
 #endif
 #ifdef ENABLE_RFID
@@ -43,7 +44,7 @@ const int EMERGENCY_BUTTON_PIN = 3;
 #ifdef ENABLE_SERVO
   const int SERVO_X_MIN_ANGLE = 0;
   const int SERVO_X_MAX_ANGLE = 140;
-  const int SERVO_Y_MIN_ANGLE = 10;
+  const int SERVO_Y_MIN_ANGLE = 0;
   const int SERVO_Y_MAX_ANGLE = 140;
   const int SERVO_ANGLE_SPEED = 1;
 #endif
@@ -56,7 +57,10 @@ const int EMERGENCY_BUTTON_PIN = 3;
 #endif
 #ifdef ENABLE_JOYSTICK
   // The maximum delta of xPos or yPos based on input. Joystick input will be scaled to this value.
-  const int MAX_INPUT_SPEED = 5;
+  const float MAX_INPUT_SPEED = 5.0f;
+#endif
+#ifdef ENABLE_RANGELIGHTS
+  const int RANGE_LED_GREEN_PIN = 13; 
 #endif
 
 // ENUMS
@@ -68,8 +72,8 @@ enum MachineState {
 };
 
 // GLOBAL STATE
-int xPos = 0;
-int yPos = 0;
+float xPos = SERVO_X_MIN_ANGLE;
+float yPos = SERVO_Y_MIN_ANGLE;
 #ifdef ENABLE_SERVO
   int servoXAngle;
   int servoYAngle;
@@ -114,6 +118,9 @@ void setup() {
     SPI.begin();
     mfrc522.PCD_Init();
   #endif
+  #ifdef ENABLE_RANGELIGHTS
+    pinMode(RANGE_LED_GREEN_PIN, OUTPUT);
+  #endif
   // Machine should start in a locked state.
   LockMachine();
 }
@@ -147,19 +154,19 @@ void loop() {
 // If ENABLE_JOYSTICK is not defined, xPos and yPos will increment from 0 to 180 repeatedly.
 void ReadJoystickInputs() {
   #ifndef ENABLE_JOYSTICK
-    xPos++;
+    xPos += 0.5f;
     if (xPos > 180) {
       xPos = 0;
     }
-    yPos++;
+    yPos += 0.5f;
     if (yPos > 180) {
       yPos = 0;
     }
   #endif
   // NormalizeValue(float inBottom, float inTop, float value, int outBottom, int outTop)
   #ifdef ENABLE_JOYSTICK
-    xPos += NormalizeValue(0, 1023, analogRead(JOYSTICK_X_PIN), 0, MAX_INPUT_SPEED);
-    yPos += NormalizeValue(0, 1023, analogRead(JOYSTICK_Y_PIN), 0, MAX_INPUT_SPEED);
+    xPos += NormalizeValue(0, 1023, analogRead(JOYSTICK_X_PIN), -1 * MAX_INPUT_SPEED, MAX_INPUT_SPEED);
+    yPos += NormalizeValue(0, 1023, analogRead(JOYSTICK_Y_PIN), -1 * MAX_INPUT_SPEED, MAX_INPUT_SPEED);
   #endif
 }
 
@@ -172,7 +179,7 @@ void DrawUnlockedScreen() {
     oled.setCursor(0,10);
     oled.println("UNLOCKED");
     // Display current voltage.
-    oled.print(analogRead(A0) * 5 / 1023);
+    oled.print(analogRead(SOLAR_PANEL_READ_PIN) * 5 / 1023);
     oled.println("V");
     // Draw current position graph.
     oled.drawRect(OLED_SCREEN_WIDTH - OLED_SCREEN_HEIGHT, 0, OLED_SCREEN_HEIGHT, OLED_SCREEN_HEIGHT, WHITE);
@@ -201,8 +208,16 @@ void DoStateUnlockedFunctions() {
   DrawUnlockedScreen();
   ReadJoystickInputs();
   SetServosToCurrentPosition();
+  #ifdef ENABLE_RANGELIGHTS
+    int solarRead = analogRead(SOLAR_PANEL_READ_PIN) * 5 / 1023;
+    if (solarRead > 2.8f && solarRead < 3.5f) {
+      digitalWrite(RANGE_LED_GREEN_PIN, HIGH);
+    } else {
+      digitalWrite(RANGE_LED_GREEN_PIN, LOW);
+    }
+  #endif
   if (ValidChangeLockAction()) {
-    UnlockMachine();
+    LockMachine();
     delay(1000);
     return;
   }
@@ -275,6 +290,9 @@ void LockMachine() {
   #ifdef ENABLE_SERVO
     xServo.detach();
     yServo.detach();
+  #endif
+  #ifdef ENABLE_RANGELIGHTS
+    digitalWrite(RANGE_LED_GREEN_PIN, LOW);
   #endif
 
   machineState = MACHINE_LOCKED;
